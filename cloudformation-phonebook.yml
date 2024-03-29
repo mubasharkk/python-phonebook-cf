@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: |
   CloudFormation Template for Phonebook Application. This template creates Application Load Balancer
-  with Auto Scaling Group of Amazon Linux 2023 (ami-0230bd60aa48260c6) EC2 Instances which host Python Flask Web Application.
+  with Auto Scaling Group of Amazon Linux 2023 (ami-0c101f26f147fa7fd) EC2 Instances which host Python Flask Web Application.
   EC2 instances are placed within WebServerSecurityGroup which allows http (80) connections only from ALBSecurityGroup,
   and allows tcp(3306) connections only within itself. RDS DB instance is placed within WebServerSecurityGroup
   so that Database Server can communicate with Web Servers. Application Load Balancer is placed within ALBSecurityGroup
@@ -9,9 +9,133 @@ Description: |
   Launch Template in order to spin up instances needed. LT Launch Template is configured to prepare Python Flask
   environment on EC2, and to deploy Phonebook Application on Flask Server after downloading the app code
   from Github repository.
-
-# Parameters:
-
+Parameters:
+  PPBKeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Please select your key-pair name
+  PPBSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Please select subnets in your region
+  PPBVpcId:
+    Description: VPC Id of your existing account
+    Type: AWS::EC2::VPC::Id
 Resources:
-
-# Output:
+  PBBRDSSecurityGroup:
+    Type: AWS::RDS::DBSecurityGroup
+    Properties:
+      DBSecurityGroupIngress:
+        - EC2SecurityGroupId: !GetAtt PBBWebServerSecurityGroup.Id
+      GroupDescription: RDS security group
+  PBBALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows 22 and 80
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+  PBBWebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows 22 and 80
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+  PBBLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: ami-0c101f26f147fa7fd
+        InstanceType: t2.micro
+        KeyName: !Ref PPBKeyPair
+        SecurityGroupIds:
+          - !GetAtt PBBWebServerSecurityGroup.GroupId
+        UserData: !Base64
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              dnf update -y
+              dnf install git python3-pip -y
+              cd /home/ec2-user
+              echo "${MyRDSURI}" > /home/ec2-user/dbserver.endpoint
+              git clone https://github.com/mubasharkk/python-phonebook-cf app
+              cd app/code
+              pip install -r requirements.txt
+              python3 phonebook-app.py
+            - MyRDSURI: !GetAtt PBBRDS.Endpoint.Address
+  PBBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref PPBVpcId
+  PBBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PBBTargetGroup
+      LoadBalancerArn: !Ref PBBLoadBalancer
+      Port: 80
+      Protocol: HTTP
+  PBBLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Scheme: internet-facing
+      SecurityGroups:
+        - !GetAtt PBBALBSecurityGroup.GroupId
+      Subnets: !Ref PPBSubnets
+      Type: application
+  PBBAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones: !GetAZs ''
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      LaunchTemplate:
+        LaunchTemplateId: !Ref PBBLaunchTemplate
+        Version: !GetAtt PBBLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 2
+      TargetGroupARNs:
+        - !Ref PBBTargetGroup
+      VPCZoneIdentifier: !Ref PPBSubnets
+      Tags:
+        - Key: Name
+          Value: PBBAutoScalingGroup
+          PropagateAtLaunch: true
+  PBBRDS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: false
+      BackupRetentionPeriod: 0
+      DBInstanceClass: db.t3.micro
+      DBInstanceIdentifier: phonebook-app
+      DBName: clarusway_phonebook
+      Engine: MySQL
+      EngineVersion: 8.0.35
+      MasterUsername: admin
+      MasterUserPassword: clarusway_1234
+      Port: 3306
+      PubliclyAccessible: true
+      DBSecurityGroups:
+        - !Ref PBBRDSSecurityGroup
+Outputs:
+  WebsiteURL:
+    Value: !Sub
+      - http://${ALBAddress}
+      - ALBAddress: !GetAtt PBBLoadBalancer.DNSName
+    Description: Phonebook Application Load Balancer URL
