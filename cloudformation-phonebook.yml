@@ -68,8 +68,14 @@ Resources:
               git clone https://github.com/mubasharkk/python-phonebook-cf app
               cd app/code
               pip install -r requirements.txt
+              python3 db-seed.py
               python3 phonebook-app.py
             - MyRDSURI: !GetAtt PBBRDS.Endpoint.Address
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub Web Server of ${AWS::StackName} Stack
   PBBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
