@@ -30,3 +30,4 @@ def read_file_into_string(file_path):
 data_phonebook_table = read_file_into_string("/home/ec2-user/app/code/clarusway_phonebook.phonebook.sql")
 # print(data_phonebook_table)
 cursor.execute(data_phonebook_table)
+print("Data imported successfully!")
